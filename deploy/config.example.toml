@@ -1,0 +1,26 @@
+# Watcher audit agent — configuración. Solo se listan las claves habituales;
+# los valores por defecto completos están en src/watcher/agent/config.py.
+# Cualquier cambio en este archivo queda registrado centralmente (CONFIG_CHANGED).
+
+[server]
+url = "https://audit.example.com:8443"
+ca_file = ""          # CA propia del repositorio, si no es pública
+client_cert = ""      # autenticación mutua (opcional)
+client_key = ""
+
+[files]
+# Carpetas auditadas (admite comodines). El daemon corre como root/SYSTEM: use rutas absolutas.
+watch_paths = ["/Users/*/Documents", "/Users/*/Desktop", "/Users/*/Downloads"]
+# Windows: ["C:/Users/*/Documents", "C:/Users/*/Desktop", "C:/Users/*/Downloads"]
+
+[capture]
+enabled = true
+# Solo se copian como evidencia archivos con estas extensiones y hasta max_bytes.
+extensions = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".txt", ".zip"]
+max_bytes = 26214400
+# true = al activar, copiar también los documentos que ya existían (más evidencia, más datos personales)
+baseline_capture = false
+
+[processes]
+capture_scripts = true      # conservar copia de los scripts ejecutados
+extra_interpreters = []     # p. ej. ["lua", "Rscript"]

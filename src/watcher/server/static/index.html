@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watcher · Auditoría de endpoints</title>
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--ink:#16202c;--mute:#637083;--line:#dfe3e9;--accent:#0b5cad;--ok:#17794a;--warn:#a15c00;--bad:#b3261e;--chip:#eef1f5;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#0f141a;--panel:#171e27;--ink:#e6eaf0;--mute:#93a0b2;--line:#28323f;--accent:#6cb2f7;--ok:#4cc38a;--warn:#e0a44a;--bad:#f2766c;--chip:#222c38}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:200px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:16px 0;position:sticky;top:0;height:100vh;overflow:auto}
+nav h1{font-size:15px;margin:0 16px 14px;letter-spacing:.02em}
+nav h1 small{display:block;font-weight:400;color:var(--mute);font-size:11px}
+nav a{display:flex;justify-content:space-between;padding:7px 16px;color:var(--ink);text-decoration:none;border-left:3px solid transparent;cursor:pointer}
+nav a:hover{background:var(--chip)}
+nav a.on{border-left-color:var(--accent);background:var(--chip);font-weight:600}
+nav .count{background:var(--bad);color:#fff;border-radius:9px;padding:0 6px;font-size:11px}
+main{flex:1;min-width:0;padding:20px 24px 60px}
+h2{margin:0 0 4px;font-size:20px}
+p.sub{margin:0 0 16px;color:var(--mute)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card b{display:block;font-size:24px;font-variant-numeric:tabular-nums}
+.card span{color:var(--mute);font-size:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:20px;overflow:auto}
+.panel>h3{margin:0;padding:10px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);white-space:nowrap;position:sticky;top:0;background:var(--panel)}
+tr.click{cursor:pointer}tr.click:hover{background:var(--chip)}
+td.mono,.mono{font-family:var(--mono);font-size:12px;word-break:break-all}
+td.nw{white-space:nowrap;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:var(--chip);white-space:nowrap}
+.b-ok{color:var(--ok)}.b-warn{color:var(--warn)}.b-bad{color:var(--bad)}.b-mute{color:var(--mute)}
+form.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:end}
+label{font-size:11px;color:var(--mute);display:flex;flex-direction:column;gap:2px}
+input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+button{cursor:pointer}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.small{padding:2px 8px;font-size:12px}
+#drawer{position:fixed;top:0;right:0;width:min(640px,100vw);height:100vh;background:var(--panel);border-left:1px solid var(--line);box-shadow:-8px 0 24px #0003;padding:18px;overflow:auto;display:none;z-index:5}
+#drawer pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-all}
+dl{display:grid;grid-template-columns:150px 1fr;gap:4px 10px;margin:10px 0}
+dt{color:var(--mute)}dd{margin:0;word-break:break-all}
+#login{margin:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:28px;width:320px}
+#login input{width:100%;margin:10px 0}
+.err{color:var(--bad)}.note{color:var(--mute);font-size:12px;padding:10px 14px}
+@media(max-width:760px){body{flex-direction:column}nav{width:100%;height:auto;position:static;display:flex;flex-wrap:wrap;padding:8px}nav h1{width:100%}nav a{border-left:0;padding:5px 10px}main{padding:14px 16px}}
+</style>
+</head>
+<body>
+<div id="app" style="display:contents"></div>
+<div id="drawer"></div>
+<script>
+"use strict";
+// All data shown here originates on audited endpoints (file names, command lines) and is untrusted:
+// it is only ever inserted as text nodes / attributes through h(), never as HTML.
+const h=(tag,attrs={},...kids)=>{const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs||{})){if(k==="on")for(const[n,f]of Object.entries(v))e.addEventListener(n,f);else if(k==="class")e.className=v;else if(v!==null&&v!==undefined&&v!==false)e.setAttribute(k,v===true?"":v)}for(const k of kids.flat(3))if(k!==null&&k!==undefined&&k!==false)e.append(k instanceof Node?k:String(k));return e};
+const $app=document.getElementById("app"),$drawer=document.getElementById("drawer");
+async function api(path,opts={}){const r=await fetch(path,{credentials:"same-origin",...opts,headers:opts.body?{"Content-Type":"application/json"}:{}});if(r.status===401){showLogin();throw new Error("auth")}if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||("HTTP "+r.status));return r.json()}
+const post=(p,b)=>api(p,{method:"POST",body:JSON.stringify(b||{})});
+const fmt=t=>t?t.replace("T"," ").replace(/\.\d+Z$|Z$/," UTC"):"—";
+const short=s=>s?s.slice(0,12)+"…":"—";
+const bytes=n=>n==null?"—":n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(1)+" MB";
+const STATE={ACTIVE:"b-ok",DISABLED:"b-mute",STARTING:"b-warn",DEGRADED:"b-warn",DISCONNECTED:"b-bad",STOPPED:"b-bad",TAMPER_DETECTED:"b-bad"};
+const SEV={critical:"b-bad",high:"b-bad",medium:"b-warn",info:"b-mute"};
+const badge=(t,c)=>h("span",{class:"badge "+(c||"")},t);
+const typeClass=t=>/DELETED|STOPPED|TAMPER|UNCLEAN|DROPPED|RESYNC|FAILED|LOST/.test(t)?"b-bad":/REMOTE|CONFIG/.test(t)?"b-warn":/STARTED|CREATED/.test(t)?"b-ok":"";
+const table=(cols,rows,onRow)=>rows.length?h("table",{},h("thead",{},h("tr",{},cols.map(c=>h("th",{},c[0])))),h("tbody",{},rows.map(r=>h("tr",onRow?{class:"click",on:{click:()=>onRow(r)}}:{},cols.map(c=>h("td",{class:c[2]||""},c[1](r))))))):h("div",{class:"note"},"Sin registros.");
+const panel=(title,...body)=>h("div",{class:"panel"},title&&h("h3",{},title),...body);
+
+const VIEWS=[["resumen","Resumen"],["endpoints","Endpoints y agentes"],["timeline","Timeline"],["procesos","Procesos"],["comandos","Comandos"],["archivos","Archivos"],["evidencias","Evidencias"],["sesiones","Sesiones remotas"],["integridad","Integridad"],["alertas","Alertas"],["exportar","Exportar y accesos"]];
+let endpointsCache=[];
+function showLogin(msg){$drawer.style.display="none";const pw=h("input",{type:"password",placeholder:"Contraseña de custodio",autofocus:true});const err=h("div",{class:"err"},msg||"");
+  $app.replaceChildren(h("form",{id:"login",on:{submit:async e=>{e.preventDefault();const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pw.value})});if(r.ok)route();else err.textContent=r.status===429?"Demasiados intentos. Espere unos minutos.":"Contraseña incorrecta."}}},h("h2",{},"Watcher"),h("p",{class:"sub"},"Repositorio de auditoría de endpoints"),pw,h("button",{class:"primary"},"Entrar"),err))}
+function shell(view,alerts){const main=h("main",{});
+  $app.replaceChildren(h("nav",{},h("h1",{},"Watcher",h("small",{},"Auditoría de endpoints")),VIEWS.map(([id,name])=>h("a",{class:id===view?"on":"",href:"#"+id},name,id==="alertas"&&alerts?h("span",{class:"count"},alerts):null)),h("a",{on:{click:async()=>{await post("/api/logout");showLogin()}}},"Salir")),main);return main}
+async function route(){const[view,qs]=(location.hash.slice(1)||"resumen").split("?");const params=Object.fromEntries(new URLSearchParams(qs||""));
+  try{const ov=await api("/api/overview");endpointsCache=await api("/api/endpoints");const main=shell(view,ov.open_alerts);await(RENDER[view]||RENDER.resumen)(main,params,ov)}catch(e){if(e.message!=="auth")$app.append(h("p",{class:"err"},"Error: "+e.message))}}
+window.addEventListener("hashchange",()=>{$drawer.style.display="none";route()});
+const hostOf=id=>(endpointsCache.find(e=>e.id===id)||{}).hostname||id||"—";
+
+function eventRow(r){const b=r.body,a=b.actor||{},res=b.resource||{};let what=res.path||a.cmdline||"";if(b.event_type.startsWith("REMOTE_"))what=[b.data.provider,b.data.remote_host,b.data.user].filter(Boolean).join(" · ");else if(!what&&b.data)what=Object.entries(b.data).filter(([,v])=>typeof v!=="object").slice(0,4).map(([k,v])=>k+"="+v).join("  ");return what}
+const EVENT_COLS=[["Hora (UTC)",r=>fmt(r.ts),"nw"],["Endpoint",r=>hostOf(r.endpoint_id)],["Evento",r=>badge(r.event_type,typeClass(r.event_type))],["Usuario",r=>r.user||"—"],["Proceso",r=>r.process||"—"],["Detalle",eventRow,"mono"],["Sesión",r=>r.body.session?badge(r.body.session.provider,"b-warn"):""],["Evid.",r=>r.evidence_sha256?badge("copia","b-ok"):""]];
+function showEvent(r){const b=r.body,rows=[["Evento",b.event_type],["Hora del evento",fmt(b.timestamp)],["Recibido en repositorio",fmt(r.received_at)],["Endpoint",hostOf(r.endpoint_id)+" ("+r.endpoint_id+")"],["Secuencia",r.seq],["Hash del evento",b.integrity.event_hash],["Hash anterior",b.integrity.previous_hash]];
+  if(b.session)rows.push(["Sesión remota activa",b.session.provider+" · "+b.session.session_id+" (correlación temporal, no causal)"]);
+  $drawer.replaceChildren(h("button",{class:"small",on:{click:()=>$drawer.style.display="none"}},"Cerrar ✕"),h("h2",{},b.event_type),h("dl",{},rows.map(([k,v])=>[h("dt",{},k),h("dd",{class:"mono"},v)])),
+    r.evidence_sha256?h("p",{},h("a",{href:"/api/evidence/"+r.evidence_sha256+"/download"},"Descargar evidencia "+short(r.evidence_sha256))," (la descarga queda registrada)"):(b.evidence?h("p",{class:"note"},"Sin copia de evidencia: "+(b.evidence.reason||"—")):null),
+    h("h3",{},"Registro completo"),h("pre",{},JSON.stringify(b,null,2)));$drawer.style.display="block"}
+
+async function eventsView(main,params,title,sub,category){const f={...params};if(category)f.category=category;const types=category?[]:await api("/api/event-types");let offset=0;const body=h("div",{});
+  const field=(name,label,el)=>{el.name=name;el.value=f[name]||"";return h("label",{},label,el)};
+  const form=h("form",{class:"filters",on:{submit:e=>{e.preventDefault();const q=new URLSearchParams([...new FormData(form)].filter(([,v])=>v));location.hash=location.hash.slice(1).split("?")[0]+"?"+q}}},
+    field("endpoint","Endpoint",h("select",{},h("option",{value:""},"Todos"),endpointsCache.map(e=>h("option",{value:e.id},e.hostname)))),
+    !category&&field("type","Tipo",h("select",{},h("option",{value:""},"Todos"),types.map(t=>h("option",{value:t},t)))),
+    field("q","Texto",h("input",{placeholder:"ruta, comando, hash…"})),field("from","Desde (UTC ISO)",h("input",{placeholder:"2026-11-09T08:00"})),field("to","Hasta",h("input",{placeholder:"2026-11-09T09:00"})),
+    f.session&&field("session","Sesión",h("input",{})),h("button",{class:"primary"},"Filtrar"));
+  const more=h("button",{on:{click:()=>load()}},"Cargar más");
+  async function load(){const rows=await api("/api/events?"+new URLSearchParams({...f,limit:200,offset}));offset+=rows.length;const t=table(EVENT_COLS,rows,showEvent),tb=body.querySelector("tbody");if(tb&&rows.length)tb.append(...t.querySelector("tbody").children);else if(!tb)body.replaceChildren(t);more.style.display=rows.length<200?"none":""}
+  main.append(h("h2",{},title),h("p",{class:"sub"},sub),form,panel(null,body),more);await load()}
+
+const RENDER={
+async resumen(main,_,ov){const alerts=(await api("/api/alerts")).filter(a=>!a.acknowledged_at&&a.severity!=="info").slice(0,8);const recent=await api("/api/events?limit=15");
+  main.append(h("h2",{},"Resumen"),h("p",{class:"sub"},"Estado general del repositorio de auditoría."),
+    h("div",{class:"cards"},[["Endpoints",ov.endpoints],["Activos",ov.states.ACTIVE||0],["Eventos (24 h)",ov.events_24h],["Eventos totales",ov.events_total],["Evidencias",ov.evidence_objects+" · "+bytes(ov.evidence_bytes)],["Sesiones remotas abiertas",ov.active_sessions],["Alertas sin atender",ov.open_alerts]].map(([l,v])=>h("div",{class:"card"},h("b",{},v),h("span",{},l)))),
+    panel("Alertas sin atender",table([["Hora",a=>fmt(a.ts),"nw"],["Severidad",a=>badge(a.severity,SEV[a.severity])],["Endpoint",a=>a.hostname||"—"],["Alerta",a=>a.message]],alerts)),
+    panel("Actividad por tipo (24 h)",table([["Tipo",r=>badge(r.event_type,typeClass(r.event_type))],["Eventos",r=>r.n]],ov.by_type_24h)),
+    panel("Últimos eventos",table(EVENT_COLS,recent,showEvent)))},
+async endpoints(main){const toggle=(e,on)=>h("button",{class:"small",on:{click:async()=>{if(confirm((on?"Activar":"Desactivar")+" la auditoría en "+e.hostname+"? Quedará registrado.")){await post("/api/endpoints/"+e.id+"/audit",{enabled:on});alert("Solicitado. El agente lo aplica en su siguiente latido.");route()}}}},on?"Activar":"Desactivar");
+  main.append(h("h2",{},"Endpoints y agentes"),h("p",{class:"sub"},"Equipos registrados y estado verificable de cada agente."),
+    panel(null,table([["Equipo",e=>e.hostname],["Plataforma",e=>e.platform],["Estado",e=>badge(e.state,STATE[e.state])],["Auditoría",e=>e.enabled?"activada":"desactivada"],["Fuentes",e=>(e.detail.sources||[]).join(", ")||"—"],["Degradado",e=>Object.entries(e.detail.degraded||{}).map(([k,v])=>k+": "+v).join("; ")||"—"],["Último latido",e=>fmt(e.last_seen),"nw"],["Eventos",e=>e.last_seq],["Cola local",e=>e.spool_depth??"—"],["Desfase reloj",e=>e.clock_skew==null?"—":e.clock_skew+" s"],["Agente",e=>e.agent_version],["",e=>toggle(e,!e.enabled)]],endpointsCache)),
+    h("p",{class:"note"},"Para registrar un equipo nuevo: en el servidor ejecute «watcher-server info» para obtener el token de enrolamiento y en el equipo «watcher-agent enroll»."))},
+timeline:(m,p)=>eventsView(m,p,"Timeline de actividad","Todos los eventos observados, del más reciente al más antiguo."+(p.session?" Filtrado por la ventana de la sesión "+p.session+".":"")),
+procesos:(m,p)=>eventsView(m,p,"Explorador de procesos","Procesos iniciados en los equipos auditados.","processes"),
+comandos:(m,p)=>eventsView(m,p,"Historial de comandos","Intérpretes y scripts ejecutados (PowerShell, CMD, Python, Bash, Zsh, Java, Node…). Los secretos se enmascaran en el equipo.","commands"),
+archivos:(m,p)=>eventsView(m,p,"Explorador de archivos","Creación, modificación, eliminación, movimiento y copia de archivos.","files"),
+async evidencias(main){const rows=await api("/api/evidence");main.append(h("h2",{},"Evidencias digitales"),h("p",{class:"sub"},"Copias conservadas de documentos y scripts. Identificadas por su SHA-256; cada descarga queda registrada."),
+  panel(null,table([["Guardada",r=>fmt(r.stored_at),"nw"],["Endpoint",r=>hostOf(r.endpoint_id)],["Archivo original",r=>r.path||"—","mono"],["Tamaño",r=>bytes(r.size),"nw"],["SHA-256",r=>r.sha256,"mono"],["Eventos",r=>r.events],["",r=>h("a",{href:"/api/evidence/"+r.sha256+"/download"},"Descargar")]],rows)))},
+async sesiones(main){const rows=await api("/api/sessions");main.append(h("h2",{},"Sesiones remotas"),h("p",{class:"sub"},"Seleccione una sesión para ver todo lo que el equipo registró mientras estuvo abierta. La relación es temporal: no prueba que la sesión causó cada evento."),
+  panel(null,table([["Inicio",r=>fmt(r.started),"nw"],["Fin",r=>r.ended?fmt(r.ended):badge("abierta","b-warn"),"nw"],["Endpoint",r=>r.hostname||r.endpoint_id],["Proveedor",r=>badge(r.provider,"b-warn")],["Origen",r=>r.remote||"—"],["Usuario",r=>r.user||"—"],["Detección",r=>r.detail.detection||"—"]],rows,r=>{location.hash="timeline?session="+encodeURIComponent(r.session_id)})))},
+async integridad(main){const out=h("div",{});const cps=await api("/api/checkpoints");
+  const run=async()=>{out.replaceChildren(h("p",{class:"note"},"Verificando…"));const r=await post("/api/integrity/verify");out.replaceChildren(
+    h("p",{},badge(r.ok?"ÍNTEGRO":"INCONSISTENCIAS DETECTADAS",r.ok?"b-ok":"b-bad")," verificado "+fmt(r.verified_at)),
+    table([["Endpoint",e=>e.hostname],["Eventos",e=>e.events],["Checkpoints",e=>e.checkpoints],["Cadena",e=>badge(e.ok?"correcta":e.error_count+" errores",e.ok?"b-ok":"b-bad")],["Errores",e=>e.errors.join(" | ")||"—"]],r.endpoints),
+    h("p",{class:"note"},"Evidencias: "+r.evidence.objects+" objetos — "+(r.evidence.ok?"todos coinciden con su SHA-256":r.evidence.errors.join(" | "))))};
+  main.append(h("h2",{},"Integridad de registros"),h("p",{class:"sub"},"Recalcula el hash de cada evento, comprueba el enlace con el anterior, la continuidad de secuencia, los checkpoints firmados y el SHA-256 de cada evidencia."),
+    h("p",{},h("button",{class:"primary",on:{click:run}},"Verificar ahora")," ",h("button",{on:{click:async()=>{await post("/api/integrity/checkpoint");route()}}},"Crear checkpoint")),panel("Resultado",out),
+    panel("Checkpoints",table([["Fecha",c=>fmt(c.ts),"nw"],["Endpoint",c=>c.hostname||c.endpoint_id],["Hasta seq",c=>c.seq],["Hash sellado",c=>c.event_hash,"mono"],["Firma (HMAC)",c=>short(c.signature),"mono"]],cps)))},
+async alertas(main){const rows=await api("/api/alerts");main.append(h("h2",{},"Alertas"),h("p",{class:"sub"},"Interrupciones del agente, pérdida de comunicación, manipulación y fallos de integridad."),
+  panel(null,table([["Hora",a=>fmt(a.ts),"nw"],["Severidad",a=>badge(a.severity,SEV[a.severity])],["Tipo",a=>a.kind],["Endpoint",a=>a.hostname||"—"],["Mensaje",a=>a.message],["Estado",a=>a.acknowledged_at?"atendida "+fmt(a.acknowledged_at):h("button",{class:"small",on:{click:async()=>{await post("/api/alerts/"+a.id+"/ack");route()}}},"Marcar atendida")]],rows)))},
+async exportar(main){const log=await api("/api/access-log");const ep=h("select",{},h("option",{value:""},"Todos"),endpointsCache.map(e=>h("option",{value:e.id},e.hostname)));const from=h("input",{placeholder:"2026-11-09T08:00"}),to=h("input",{placeholder:"2026-11-09T09:00"});
+  const go=fmtName=>{const q=new URLSearchParams({format:fmtName});if(ep.value)q.set("endpoint",ep.value);if(from.value)q.set("from",from.value);if(to.value)q.set("to",to.value);location.href="/api/export?"+q};
+  main.append(h("h2",{},"Exportar y accesos"),h("p",{class:"sub"},"Informe de eventos con sus hashes de integridad. Cada exportación y cada descarga de evidencia queda registrada."),
+    h("div",{class:"filters"},h("label",{},"Endpoint",ep),h("label",{},"Desde (UTC)",from),h("label",{},"Hasta (UTC)",to),h("button",{class:"primary",on:{click:()=>go("json")}},"Exportar JSON"),h("button",{on:{click:()=>go("csv")}},"Exportar CSV")),
+    panel("Accesos a evidencias",table([["Hora",r=>fmt(r.ts),"nw"],["Quién",r=>r.who],["Acción",r=>r.action],["SHA-256",r=>r.sha256,"mono"],["IP",r=>r.ip]],log.evidence)),
+    panel("Acciones de custodios",table([["Hora",r=>fmt(r.ts),"nw"],["Quién",r=>r.who],["Acción",r=>r.action],["Detalle",r=>r.detail,"mono"],["IP",r=>r.ip]],log.admin)))}
+};
+route();
+</script>
+</body>
+</html>
