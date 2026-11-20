@@ -265,13 +265,16 @@ class Store:
         final.parent.mkdir(parents=True, exist_ok=True)
         status = "exists"
         try:
-            os.chmod(tmp, 0o444)
             os.link(tmp, final)  # atomic, fails if the object already exists
             status = "stored"
         except FileExistsError:
             pass
         finally:
             tmp.unlink(missing_ok=True)
+        # Solo lectura DESPUÉS de soltar el temporal: en Windows 0o444 es el atributo read-only, lo
+        # comparten los hard links y Windows no deja borrar un archivo read-only (HTTP 500 en cada evidencia).
+        if status == "stored":
+            os.chmod(final, 0o444)
         self.x("INSERT OR IGNORE INTO evidence(sha256, size, stored_at, endpoint_id, rel_path) VALUES(?,?,?,?,?)",
                (sha, size, iso(), endpoint_id, str(final.relative_to(self.dir))))
         return status

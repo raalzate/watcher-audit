@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import io
 import json
+import os
 import secrets
 import threading
 import time
@@ -25,6 +26,14 @@ def create_app(data_dir: Path | str, *, heartbeat_timeout: float = 45, checkpoin
                verify_interval: float = 3600, max_evidence_bytes: int = 100 * 1024 * 1024,
                monitor: bool = True) -> FastAPI:
     store = Store(data_dir)
+    # Al arrancar no hay subidas en curso: lo que quede en tmp/ es de un proceso anterior (en Windows,
+    # temporales read-only que dejó el fallo de store_evidence). Se quita el read-only y se borran.
+    for leftover in (store.evidence_dir / "tmp").iterdir():
+        try:
+            os.chmod(leftover, 0o644)
+            leftover.unlink()
+        except OSError:
+            pass
     app = FastAPI(title="Watcher Audit Repository", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
     admin_sessions: dict[str, float] = {}

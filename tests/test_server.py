@@ -89,6 +89,42 @@ def test_evidence_store(ctx):
     assert client.get("/api/access-log").json()["evidence"][0]["sha256"] == sha
 
 
+def test_evidence_store_with_windows_readonly_semantics(ctx, monkeypatch):
+    """Windows no deja borrar un archivo read-only (y los hard links comparten el atributo).
+    Antes: chmod 0o444 al temporal -> link -> unlink -> PermissionError -> HTTP 500 en cada evidencia."""
+    import os
+    import stat
+    from pathlib import Path
+
+    real_unlink = Path.unlink
+
+    def windows_unlink(self, missing_ok=False):
+        if self.exists() and not (self.stat().st_mode & stat.S_IWUSR):
+            raise PermissionError(13, "Acceso denegado", str(self))
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", windows_unlink)
+    client, store, ep, auth = ctx
+    content = b"informe trimestral"
+    sha = hashlib.sha256(content).hexdigest()
+    assert client.put(f"/api/v1/evidence/{sha}", content=content, headers=auth).status_code == 201
+    final = store.evidence_path(sha)
+    assert final.read_bytes() == content
+    assert not (final.stat().st_mode & stat.S_IWUSR)          # la copia final sí queda read-only
+    assert list((store.evidence_dir / "tmp").iterdir()) == []  # y no queda basura en tmp
+    assert os.path.exists(final)
+
+
+def test_startup_cleans_readonly_leftovers(tmp_path):
+    tmpdir = tmp_path / "evidence" / "tmp"
+    tmpdir.mkdir(parents=True)
+    leftover = tmpdir / "deadbeef"
+    leftover.write_bytes(b"x")
+    leftover.chmod(0o444)
+    create_app(tmp_path, monitor=False)
+    assert not leftover.exists()
+
+
 def test_integrity_verification_detects_tampering(ctx):
     client, store, ep, auth = ctx
     client.post("/api/v1/events", json={"events": make(ep, 5)}, headers=auth)
