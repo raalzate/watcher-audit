@@ -68,6 +68,36 @@ EVENT_ALERTS = {
 }
 
 
+# Vista "Logs" al estilo CloudWatch: grupo de logs = categoría; log stream = equipo + ventana de tiempo.
+LOG_GROUPS = [
+    ("all", "/watcher/todos", "Todos los eventos"),
+    ("processes", "/watcher/procesos", "Procesos iniciados"),
+    ("commands", "/watcher/comandos", "Intérpretes y scripts ejecutados"),
+    ("files", "/watcher/archivos", "Creación, cambio, borrado, movimiento y copia de archivos"),
+    ("remote", "/watcher/sesiones-remotas", "SSH, RDP y TeamViewer"),
+    ("agent", "/watcher/agente", "Arranque, parada, configuración e integridad del agente"),
+]
+LOG_GROUP_KEYS = {g[0] for g in LOG_GROUPS}
+_BUCKET_LEN = {"hour": 13, "day": 10}   # largo del prefijo ISO: 2026-11-20T01 / 2026-11-20
+
+
+def _category_sql(category: str | None) -> str | None:
+    return {
+        "processes": "event_type='PROCESS_STARTED'",
+        "commands": "((event_type='PROCESS_STARTED' AND interpreter IS NOT NULL) OR event_type='POWERSHELL_SCRIPTBLOCK')",
+        "files": "event_type LIKE 'FILE_%'",
+        "remote": "event_type LIKE 'REMOTE_%'",
+        "agent": ("(event_type LIKE 'AGENT_%' OR event_type LIKE 'AUDIT_%' OR event_type IN"
+                  " ('CONFIG_CHANGED','TAMPER_DETECTED','CHAIN_RESYNC','EVENTS_DROPPED','SOURCE_FAILED'))"),
+    }.get(category or "")
+
+
+def _stream_name(hostname: str, prefix: str) -> str:
+    """2026-11-20T01 -> HOST/2026/11/20/01h · 2026-11-20 -> HOST/2026/11/20 (como los streams de CloudWatch)."""
+    date, _, hour = prefix.partition("T")
+    return f"{hostname}/{date.replace('-', '/')}" + (f"/{hour}h" if hour else "")
+
+
 class Store:
     def __init__(self, data_dir: Path | str):
         self.dir = Path(data_dir)
@@ -293,22 +323,17 @@ class Store:
 
     def events(self, f: dict, limit: int = 200, offset: int = 0) -> list[dict]:
         where, params = ["1=1"], []
+        order = "ASC" if f.get("order") == "asc" else "DESC"
         if f.get("endpoint"):
             where.append("endpoint_id=?"); params.append(f["endpoint"])
         if f.get("type"):
             where.append("event_type=?"); params.append(f["type"])
-        category = f.get("category")
-        if category == "processes":
-            where.append("event_type='PROCESS_STARTED'")
-        elif category == "commands":
-            where.append("((event_type='PROCESS_STARTED' AND interpreter IS NOT NULL) OR event_type='POWERSHELL_SCRIPTBLOCK')")
-        elif category == "files":
-            where.append("event_type LIKE 'FILE_%'")
-        elif category == "remote":
-            where.append("event_type LIKE 'REMOTE_%'")
-        elif category == "agent":
-            where.append("(event_type LIKE 'AGENT_%' OR event_type LIKE 'AUDIT_%' OR event_type IN"
-                         " ('CONFIG_CHANGED','TAMPER_DETECTED','CHAIN_RESYNC','EVENTS_DROPPED','SOURCE_FAILED'))")
+        category = _category_sql(f.get("category"))
+        if category:
+            where.append(category)
+        if f.get("prefix"):
+            # un log stream: todos los ts que empiezan con el prefijo (rango, para usar el índice events_ts)
+            where.append("ts>=? AND ts<?"); params += [f["prefix"], f["prefix"] + "￿"]
         if f.get("from"):
             where.append("ts>=?"); params.append(f["from"])
         if f.get("to"):
@@ -324,10 +349,39 @@ class Store:
             where.append("body LIKE ?"); params.append(f"%{f['q']}%")
         sql = ("SELECT id, event_id, endpoint_id, seq, ts, received_at, event_type, user, process, interpreter, path,"
                f" sha256, session_id, evidence_sha256, event_hash, body FROM events WHERE {' AND '.join(where)}"
-               " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?")
+               f" ORDER BY ts {order}, id {order} LIMIT ? OFFSET ?")
         rows = self.q(sql, (*params, limit, offset))
         for r in rows:
             r["body"] = json.loads(r["body"])
+        return rows
+
+    # ------------------------------------------------------------ logs (estilo CloudWatch)
+    def log_groups(self) -> list[dict]:
+        out = []
+        for key, name, description in LOG_GROUPS:
+            cond = _category_sql(key) or "1=1"
+            stats = self.q(f"SELECT COUNT(*) AS events, COUNT(DISTINCT endpoint_id) AS endpoints,"
+                           f" MIN(ts) AS first, MAX(ts) AS last FROM events WHERE {cond}")[0]
+            out.append({"group": key, "name": name, "description": description, **stats})
+        return out
+
+    def log_streams(self, group: str, bucket: str = "hour", endpoint: str | None = None,
+                    since: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Un stream por equipo y ventana de tiempo, del más reciente al más antiguo."""
+        length = _BUCKET_LEN.get(bucket, 13)
+        where, params = [_category_sql(group) or "1=1"], []
+        if endpoint:
+            where.append("endpoint_id=?"); params.append(endpoint)
+        if since:
+            where.append("ts>=?"); params.append(since)
+        rows = self.q(
+            f"SELECT ev.endpoint_id, substr(ev.ts, 1, {length}) AS prefix, COUNT(*) AS events,"
+            " MIN(ev.ts) AS first, MAX(ev.ts) AS last, ep.hostname"
+            " FROM events ev LEFT JOIN endpoints ep ON ep.id = ev.endpoint_id"
+            f" WHERE {' AND '.join(where)} GROUP BY ev.endpoint_id, prefix ORDER BY last DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset))
+        for r in rows:
+            r["name"] = _stream_name(r["hostname"] or r["endpoint_id"], r["prefix"])
         return rows
 
     # ------------------------------------------------------------ integrity
