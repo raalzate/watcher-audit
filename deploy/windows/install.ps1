@@ -99,10 +99,20 @@ function Detener-Todo {
   foreach ($t in $TareaAgente, $TareaServidor) {
     if (Existe-Tarea $t) { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }
   }
-  Get-Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -and $_.Path.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase) } |
-    Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 1
+  # Por CIM y con arbol (/T): Get-Process no siempre ve la ruta de procesos SYSTEM, y
+  # Stop-ScheduledTask cierra el lanzador de uv pero deja vivo el python.exe hijo (el puerto sigue abierto).
+  # Continue local: en PS 5.1, "2>$null" con Stop convierte el stderr de taskkill en excepcion.
+  $ErrorActionPreference = 'Continue'
+  for ($i = 0; $i -lt 3; $i++) {
+    $vivos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.ProcessId -ne $PID -and (
+        ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)) -or
+        ($_.CommandLine -and $_.CommandLine -match 'watcher-(server|agent)|watcher\.agent'))
+    })
+    if (-not $vivos) { break }
+    foreach ($p in $vivos) { taskkill.exe /PID $p.ProcessId /T /F 2>$null | Out-Null }
+    Start-Sleep -Seconds 1
+  }
 }
 
 function Asegurar-Uv {
