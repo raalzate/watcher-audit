@@ -22,13 +22,14 @@ LSM = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
 
 
 def _decode_console(raw: bytes) -> str:
-    """Salida de wevtutil: UTF-8 si lo es; si no, la página de códigos de la consola (OEM, cp850 en
-    Windows en español). Leerla siempre como UTF-8 convertía "encontró" en U+FFFD."""
+    """Salida de wevtutil: UTF-8 si lo es; si no, la página ANSI del sistema ("mbcs": cp1252 en
+    Windows en español). Visto en Windows real: "encontró" llega como byte 0xF3 (ANSI); leído como
+    UTF-8 daba U+FFFD y leído como OEM/cp850 daba "encontr¾"."""
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         try:
-            return raw.decode("oem")          # codec que solo existe en Windows
+            return raw.decode("mbcs")         # codec que solo existe en Windows
         except LookupError:
             return raw.decode("utf-8", "replace")
 
