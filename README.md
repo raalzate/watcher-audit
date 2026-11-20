@@ -16,11 +16,46 @@ confiar en una línea de tiempo.
 | Modelo de evento y cadena de hashes | `src/watcher/common/chain.py` |
 | Enmascarado de secretos | `src/watcher/common/redact.py` |
 
-## Probarlo en una máquina (5 minutos)
+## Instalar en Windows (receta única, con uv)
+
+No hace falta instalar Python: el script instala [uv](https://docs.astral.sh/uv/) y uv baja su propio
+Python dentro de `C:\Program Files\Watcher`. Si no abrís la consola como Administrador, el script
+la vuelve a abrir con permisos. Se puede correr de nuevo: actualiza el código y conserva la
+configuración, la identidad del equipo y las evidencias.
+
+**Probar todo en un solo equipo** (repositorio y agente en el mismo PC, solo loopback):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1
+```
+
+Al final abre el dashboard e imprime la clave.
+
+**Producción** (el repositorio va en un equipo distinto del auditado):
+
+```powershell
+# 1. En el equipo del repositorio: TLS con CA propia generada en el momento, firewall y arranque con Windows
+powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 -Modo repositorio
+#    imprime el token, dónde quedó ca.pem y el comando exacto del paso 2
+
+# 2. En cada equipo auditado (con este repo y ca.pem copiados):
+powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 -Modo agente -Server https://REPO:8443 -Token TOKEN -CaFile ca.pem
+
+# Retirar (conserva datos y evidencias en C:\ProgramData):
+powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall.ps1
+```
+
+El agente se instala como servicio `WatcherAudit`. Si el servicio de pywin32 no se mantiene
+arriba, el script lo avisa y usa una tarea programada `WatcherAuditAgent` (SYSTEM, arranca con
+Windows): es el mismo agente, solo cambia quién lo lanza. Para usar un certificado propio en vez
+de la CA generada: `-TlsCert cert.pem -TlsKey key.pem`.
+
+## Probarlo en una máquina de desarrollo (5 minutos, cualquier SO)
 
 ```bash
-uv venv && uv pip install -e ".[server,dev]"      # o: python -m venv .venv && pip install -e ".[server,dev]"
-.venv/bin/python -m pytest -q
+uv run --extra server --extra dev pytest -q        # uv crea .venv con Python y dependencias
+uv run --extra server watcher-server --data ./server-data info   # token y clave del dashboard
+uv run --script deploy/gen_cert.py --out ./certs    # CA + certificado TLS de prueba, sin openssl
 
 # 1. Repositorio + dashboard (solo en loopback sin TLS)
 .venv/bin/watcher-server --data ./server-data run --port 8443 &
@@ -48,7 +83,7 @@ watcher-server --data /var/lib/watcher run --host 0.0.0.0 --port 8443 --tls-cert
 Agente (instalación administrativa, arranque automático):
 
 - macOS: `sudo PYTHON=/ruta/python3.11+ deploy/macos/install.sh https://repo:8443 TOKEN [ca.pem]` → LaunchDaemon `com.watcher.audit-agent`
-- Windows: `deploy\windows\install.ps1 -Server https://repo:8443 -Token TOKEN [-CaFile ca.pem]` → servicio `WatcherAudit`
+- Windows: ver [Instalar en Windows](#instalar-en-windows-receta-única-con-uv) → servicio `WatcherAudit`
 
 Activar / desactivar (queda registrado en el repositorio, con quién lo hizo):
 
