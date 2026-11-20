@@ -71,8 +71,10 @@ $ReglaFirewall = 'Watcher repositorio'
 
 function Paso([string]$Texto) { Write-Host ''; Write-Host "==> $Texto" -ForegroundColor Cyan }
 
+# OJO PowerShell: todo lo que un comando imprime dentro de una funcion pasa a ser su VALOR DE RETORNO.
+# Por eso la salida de los programas va a Out-Host (pantalla), nunca al pipeline.
 function Ejecutar([string]$Exe, [string[]]$Argumentos, [string]$SiFalla) {
-  & $Exe @Argumentos
+  & $Exe @Argumentos | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "$SiFalla (exit $LASTEXITCODE)" }
 }
 
@@ -107,7 +109,7 @@ function Asegurar-Uv {
   $env:UV_NO_MODIFY_PATH = '1'
   $env:INSTALLER_NO_MODIFY_PATH = '1'
   powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `
-    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://astral.sh/uv/install.ps1 | iex"
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://astral.sh/uv/install.ps1 | iex" | Out-Host
   $propio = Get-ChildItem -Path $dir -Recurse -Filter uv.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $propio) { throw "uv no quedo instalado en $dir. Sin internet: copie uv.exe a esa carpeta y repita." }
   return $propio.FullName
@@ -222,7 +224,7 @@ function Enrolar([string]$Url, [string]$Tok) {
 function Iniciar-Agente {
   Paso 'Arrancando el agente'
   $verbo = if (Get-Service $Servicio -ErrorAction SilentlyContinue) { 'update' } else { 'install' }
-  & $Py -m watcher.agent.winservice --startup auto $verbo
+  & $Py -m watcher.agent.winservice --startup auto $verbo | Out-Host
   if ($LASTEXITCODE -eq 0) {
     sc.exe failure $Servicio reset= 86400 actions= restart/10000/restart/10000/restart/60000 | Out-Null
     try { Start-Service $Servicio } catch { }
@@ -258,7 +260,7 @@ function Instalar-Agente([string]$Url, [string]$Tok, [string]$Ca) {
 
 # ---------------------------------------------------------------- main
 Detener-Todo
-$script:Uv = Asegurar-Uv
+$script:Uv = @(Asegurar-Uv)[-1]   # [-1]: la ruta, aunque algo se cuele en la salida
 
 switch ($Modo) {
   'demo' {
