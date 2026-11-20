@@ -45,6 +45,27 @@ dt{color:var(--mute)}dd{margin:0;word-break:break-all}
 #login{margin:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:28px;width:320px}
 #login input{width:100%;margin:10px 0}
 .err{color:var(--bad)}.note{color:var(--mute);font-size:12px;padding:10px 14px}
+/* Logs al estilo CloudWatch: grupos -> streams -> eventos */
+.crumbs{font-size:13px;color:var(--mute);margin-bottom:6px}
+.crumbs a,td a{color:var(--accent);text-decoration:none}.crumbs a:hover,td a:hover{text-decoration:underline}
+.title-mono{font-family:var(--mono);font-size:18px;word-break:break-all}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.toolbar input[type=search]{flex:1;min-width:240px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-right:1px solid var(--line);border-radius:0;padding:5px 10px}
+.seg button:last-child{border-right:0}.seg button.on{background:var(--accent);color:#fff}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+table.logs{table-layout:fixed}
+table.logs th:nth-child(1){width:26px}table.logs th:nth-child(2){width:230px}
+table.logs td{padding:4px 10px;font:12px/1.5 var(--mono);border-bottom:1px solid var(--line)}
+table.logs td.caret{color:var(--mute);padding-right:0;user-select:none}
+table.logs td.ts{white-space:nowrap;color:var(--mute)}
+table.logs td.msg{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.logs tr.open{background:var(--chip)}
+table.logs tr.open td.msg{white-space:pre-wrap;word-break:break-all}
+table.logs tr.detail td{background:var(--bg);padding:8px 12px 12px 36px}
+table.logs tr.detail pre{margin:0;font:12px/1.45 var(--mono);white-space:pre-wrap;word-break:break-all}
+@media(max-width:760px){table.logs th:nth-child(2){width:150px}}
 @media(max-width:760px){body{flex-direction:column}nav{width:100%;height:auto;position:static;display:flex;flex-wrap:wrap;padding:8px}nav h1{width:100%}nav a{border-left:0;padding:5px 10px}main{padding:14px 16px}}
 </style>
 </head>
@@ -69,7 +90,7 @@ const typeClass=t=>/DELETED|STOPPED|TAMPER|UNCLEAN|DROPPED|RESYNC|FAILED|LOST/.t
 const table=(cols,rows,onRow)=>rows.length?h("table",{},h("thead",{},h("tr",{},cols.map(c=>h("th",{},c[0])))),h("tbody",{},rows.map(r=>h("tr",onRow?{class:"click",on:{click:()=>onRow(r)}}:{},cols.map(c=>h("td",{class:c[2]||""},c[1](r))))))):h("div",{class:"note"},"Sin registros.");
 const panel=(title,...body)=>h("div",{class:"panel"},title&&h("h3",{},title),...body);
 
-const VIEWS=[["resumen","Resumen"],["endpoints","Endpoints y agentes"],["timeline","Timeline"],["procesos","Procesos"],["comandos","Comandos"],["archivos","Archivos"],["evidencias","Evidencias"],["sesiones","Sesiones remotas"],["integridad","Integridad"],["alertas","Alertas"],["exportar","Exportar y accesos"]];
+const VIEWS=[["resumen","Resumen"],["logs","Logs"],["endpoints","Endpoints y agentes"],["timeline","Timeline"],["procesos","Procesos"],["comandos","Comandos"],["archivos","Archivos"],["evidencias","Evidencias"],["sesiones","Sesiones remotas"],["integridad","Integridad"],["alertas","Alertas"],["exportar","Exportar y accesos"]];
 let endpointsCache=[];
 function showLogin(msg){$drawer.style.display="none";const pw=h("input",{type:"password",placeholder:"Contraseña de custodio",autofocus:true});const err=h("div",{class:"err"},msg||"");
   $app.replaceChildren(h("form",{id:"login",on:{submit:async e=>{e.preventDefault();const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pw.value})});if(r.ok)route();else err.textContent=r.status===429?"Demasiados intentos. Espere unos minutos.":"Contraseña incorrecta."}}},h("h2",{},"Watcher"),h("p",{class:"sub"},"Repositorio de auditoría de endpoints"),pw,h("button",{class:"primary"},"Entrar"),err))}
@@ -99,7 +120,71 @@ async function eventsView(main,params,title,sub,category){const f={...params};if
   async function load(){const rows=await api("/api/events?"+new URLSearchParams({...f,limit:200,offset}));offset+=rows.length;const t=table(EVENT_COLS,rows,showEvent),tb=body.querySelector("tbody");if(tb&&rows.length)tb.append(...t.querySelector("tbody").children);else if(!tb)body.replaceChildren(t);more.style.display=rows.length<200?"none":""}
   main.append(h("h2",{},title),h("p",{class:"sub"},sub),form,panel(null,body),more);await load()}
 
+// ---------------------------------------------------------------- Logs (estilo CloudWatch)
+// Grupo de logs = categoría. Log stream = un equipo en una ventana de tiempo (hora o día).
+const RANGES=[["1 h",3600],["3 h",10800],["12 h",43200],["1 d",86400],["1 sem",604800],["Todo",0]];
+const agoIso=s=>new Date(Date.now()-s*1000).toISOString().slice(0,19);
+const logsHash=p=>"#logs?"+new URLSearchParams(Object.entries(p).filter(([,v])=>v!==undefined&&v!==null&&v!==""));
+const crumbs=(...items)=>h("div",{class:"crumbs"},items.map((it,i)=>[i?" › ":"",Array.isArray(it)?h("a",{href:it[1]},it[0]):h("span",{},it)]));
+const seg=(options,current,onPick)=>h("div",{class:"seg"},options.map(([k,l])=>h("button",{type:"button",class:String(k)===String(current)?"on":"",on:{click:()=>onPick(k)}},l)));
+const rangeBar=p=>seg(RANGES.map(([l,s])=>[s,l]),p.range||0,s=>{location.hash=logsHash({...p,range:s||""})});
+function logMessage(r){const b=r.body,a=b.actor||{},res=b.resource||{},parts=[b.event_type];
+  const kv=(k,v)=>{if(v!==undefined&&v!==null&&v!==""&&typeof v!=="object")parts.push(k+"="+v)};
+  kv("user",a.user||r.user);kv("process",a.process||r.process);kv("pid",a.pid);kv("path",res.path);kv("cmd",a.cmdline);
+  for(const[k,v]of Object.entries(b.data||{}))kv(k,v);
+  if(b.session)kv("session",b.session.provider);
+  return parts.join("  ")}
+
+async function logGroups(main){const groups=await api("/api/logs/groups");const open=g=>{location.hash=logsHash({group:g.group})};
+  main.append(crumbs("Logs"),h("h2",{},"Grupos de logs"),h("p",{class:"sub"},"Cada grupo se divide en log streams: uno por equipo y por hora. Abra un grupo para ver sus streams."),
+    panel("Grupos de logs ("+groups.length+")",table([["Nombre del grupo",g=>h("a",{href:logsHash({group:g.group})},g.name),"mono"],["Descripción",g=>g.description],["Eventos",g=>g.events,"num"],["Equipos",g=>g.endpoints,"num"],["Primer evento",g=>fmt(g.first),"nw"],["Último evento",g=>fmt(g.last),"nw"]],groups,open)))}
+
+async function logStreams(main,p){const g=(await api("/api/logs/groups")).find(x=>x.group===p.group);
+  if(!g){main.append(crumbs(["Logs","#logs"],p.group),h("p",{class:"err"},"Grupo de logs desconocido."));return}
+  const bucket=p.bucket||"hour";let offset=0,rows=[];const body=h("div",{});const more=h("button",{on:{click:()=>load()}},"Cargar más");
+  const openStream=s=>logsHash({group:p.group,view:"events",endpoint:s.endpoint_id,prefix:s.prefix,stream:s.name});
+  const cols=[["Log stream",s=>h("a",{href:openStream(s)},s.name),"mono"],["Eventos",s=>s.events,"num"],["Primer evento",s=>fmt(s.first),"nw"],["Último evento",s=>fmt(s.last),"nw"]];
+  const filt=h("input",{type:"search",placeholder:"Filtrar log streams por nombre…",on:{input:()=>show()}});
+  function show(){const v=filt.value.trim().toLowerCase();body.replaceChildren(table(cols,v?rows.filter(s=>s.name.toLowerCase().includes(v)):rows,s=>{location.hash=openStream(s)}))}
+  async function load(){const q={group:p.group,bucket,limit:100,offset};if(p.endpoint)q.endpoint=p.endpoint;if(p.range)q.since=agoIso(+p.range);
+    const page=await api("/api/logs/streams?"+new URLSearchParams(q));rows=rows.concat(page);offset+=page.length;more.style.display=page.length<100?"none":"";show()}
+  const ep=h("select",{on:{change:()=>{location.hash=logsHash({...p,endpoint:ep.value})}}},h("option",{value:""},"Todos los equipos"),endpointsCache.map(e=>h("option",{value:e.id,selected:e.id===p.endpoint},e.hostname)));
+  main.append(crumbs(["Logs","#logs"],g.name),h("h2",{class:"title-mono"},g.name),h("p",{class:"sub"},g.description+" · "+g.events+" eventos."),
+    h("div",{class:"toolbar"},filt,ep,seg([["hour","Por hora"],["day","Por día"]],bucket,k=>{location.hash=logsHash({...p,bucket:k})}),rangeBar(p),
+      h("button",{class:"primary",on:{click:()=>{location.hash=logsHash({group:p.group,view:"events",endpoint:p.endpoint,range:p.range})}}},"Buscar en todos los streams")),
+    panel("Log streams",body),more);
+  await load()}
+
+async function logEvents(main,p){const g=(await api("/api/logs/groups")).find(x=>x.group===p.group)||{name:p.group};
+  const order=p.order||(p.prefix?"asc":"desc");let offset=0;
+  const tbody=h("tbody",{}),empty=h("div",{class:"note"},"Sin eventos con este filtro."),more=h("button",{on:{click:()=>load()}},"Cargar más");
+  const tbl=h("table",{class:"logs"},h("thead",{},h("tr",{},h("th",{}),h("th",{},"Marca de tiempo (UTC)"),h("th",{},"Mensaje"))),tbody);
+  const detail=r=>h("tr",{class:"detail"},h("td",{colspan:3},
+    h("div",{class:"toolbar"},h("button",{class:"small",on:{click:e=>{e.stopPropagation();showEvent(r)}}},"Ver en panel"),
+      r.evidence_sha256&&h("a",{href:"/api/evidence/"+r.evidence_sha256+"/download"},"Descargar evidencia"),
+      h("span",{class:"note",style:"padding:0"},hostOf(r.endpoint_id)+" · seq "+r.seq+" · hash "+short(r.event_hash))),
+    h("pre",{},JSON.stringify(r.body,null,2))));
+  function toggle(tr,open){if(tr.classList.contains("open")===open)return;tr.classList.toggle("open",open);tr.firstChild.textContent=open?"▾":"▸";
+    if(open)tr.after(detail(tr._r));else if(tr.nextElementSibling&&tr.nextElementSibling.classList.contains("detail"))tr.nextElementSibling.remove()}
+  async function load(){const q={limit:200,offset,order};if(p.group!=="all")q.category=p.group;if(p.endpoint)q.endpoint=p.endpoint;
+    if(p.prefix)q.prefix=p.prefix;else if(p.range)q.from=agoIso(+p.range);if(p.q)q.q=p.q;
+    const rows=await api("/api/events?"+new URLSearchParams(q));offset+=rows.length;
+    for(const r of rows){const tr=h("tr",{class:"ev click"},h("td",{class:"caret"},"▸"),h("td",{class:"ts"},r.ts),h("td",{class:"msg"},logMessage(r)));
+      tr._r=r;tr.addEventListener("click",()=>toggle(tr,!tr.classList.contains("open")));tbody.append(tr)}
+    empty.style.display=offset?"none":"";more.style.display=rows.length<200?"none":""}
+  const q=h("input",{type:"search",placeholder:"Filtrar eventos: ruta, comando, usuario, hash…",value:p.q||""});
+  const title=p.stream||(p.endpoint?hostOf(p.endpoint)+" · todos los streams":"Todos los streams");
+  main.append(crumbs(["Logs","#logs"],[g.name,logsHash({group:p.group})],title),h("h2",{class:"title-mono"},title),
+    h("p",{class:"sub"},"Click en una fila para ver el evento completo."),
+    h("form",{class:"toolbar",on:{submit:e=>{e.preventDefault();location.hash=logsHash({...p,q:q.value})}}},q,h("button",{class:"primary"},"Filtrar"),
+      !p.prefix&&rangeBar(p),
+      seg([["asc","Antiguos primero"],["desc","Recientes primero"]],order,k=>{location.hash=logsHash({...p,order:k})}),
+      h("button",{type:"button",on:{click:()=>{const open=!tbody.querySelector("tr.open");tbody.querySelectorAll("tr.ev").forEach(tr=>toggle(tr,open))}}},"Expandir / contraer todo")),
+    panel(null,tbl,empty),more);
+  await load()}
+
 const RENDER={
+async logs(main,p){if(!p.group)return logGroups(main);return p.view==="events"?logEvents(main,p):logStreams(main,p)},
 async resumen(main,_,ov){const alerts=(await api("/api/alerts")).filter(a=>!a.acknowledged_at&&a.severity!=="info").slice(0,8);const recent=await api("/api/events?limit=15");
   main.append(h("h2",{},"Resumen"),h("p",{class:"sub"},"Estado general del repositorio de auditoría."),
     h("div",{class:"cards"},[["Endpoints",ov.endpoints],["Activos",ov.states.ACTIVE||0],["Eventos (24 h)",ov.events_24h],["Eventos totales",ov.events_total],["Evidencias",ov.evidence_objects+" · "+bytes(ov.evidence_bytes)],["Sesiones remotas abiertas",ov.active_sessions],["Alertas sin atender",ov.open_alerts]].map(([l,v])=>h("div",{class:"card"},h("b",{},v),h("span",{},l)))),

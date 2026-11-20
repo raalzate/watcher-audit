@@ -189,3 +189,31 @@ def test_sessions_and_timeline_window(ctx):
     assert [e["event_type"] for e in inside] == ["REMOTE_SESSION_ENDED", "FILE_DELETED", "REMOTE_SESSION_STARTED"]
     csv_text = client.get("/api/export?format=csv").text
     assert csv_text.count("\n") == 6 and "FILE_DELETED" in csv_text
+
+
+def test_log_groups_and_streams(ctx):
+    client, store, ep, auth = ctx
+    events = make(ep, 3)
+    events[0]["timestamp"], events[1]["timestamp"], events[2]["timestamp"] = (
+        "2026-11-20T01:10:00.000Z", "2026-11-20T01:50:00.000Z", "2026-11-20T02:05:00.000Z")
+    prev = GENESIS
+    for ev in events:                      # re-sellar: cambiamos el timestamp
+        seal(ev, prev)
+        prev = ev["integrity"]["event_hash"]
+    assert client.post("/api/v1/events", json={"events": events}, headers=auth).status_code == 200
+    assert client.get("/api/logs/groups").status_code == 401
+    login(client, store)
+
+    groups = {g["group"]: g for g in client.get("/api/logs/groups").json()}
+    assert groups["files"]["name"] == "/watcher/archivos" and groups["files"]["events"] == 3
+    assert groups["processes"]["events"] == 0
+
+    streams = client.get("/api/logs/streams", params={"group": "files"}).json()
+    assert [(s["name"], s["events"]) for s in streams] == [("pc-1/2026/11/20/02h", 1), ("pc-1/2026/11/20/01h", 2)]
+    by_day = client.get("/api/logs/streams", params={"group": "files", "bucket": "day"}).json()
+    assert [(s["name"], s["events"]) for s in by_day] == [("pc-1/2026/11/20", 3)]
+    assert client.get("/api/logs/streams", params={"group": "nope"}).status_code == 404
+
+    one = client.get("/api/events", params={"category": "files", "endpoint": ep, "prefix": "2026-11-20T01",
+                                            "order": "asc"}).json()
+    assert [e["ts"] for e in one] == ["2026-11-20T01:10:00.000Z", "2026-11-20T01:50:00.000Z"]

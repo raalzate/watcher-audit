@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .store import _SHA, Store
+from .store import _SHA, LOG_GROUP_KEYS, Store
 
 STATIC = Path(__file__).parent / "static"
 SESSION_TTL = 8 * 3600
@@ -185,11 +185,23 @@ def create_app(data_dir: Path | str, *, heartbeat_timeout: float = 45, checkpoin
 
     def filters(request: Request) -> dict:
         return {k: v for k, v in request.query_params.items()
-                if k in ("endpoint", "type", "category", "from", "to", "session", "q") and v}
+                if k in ("endpoint", "type", "category", "from", "to", "session", "q", "prefix", "order") and v}
 
     @app.get("/api/events")
     def events(request: Request, limit: int = 200, offset: int = 0, _: str = Depends(admin)):
         return store.events(filters(request), min(max(limit, 1), 1000), max(offset, 0))
+
+    @app.get("/api/logs/groups")
+    def log_groups(_: str = Depends(admin)):
+        return store.log_groups()
+
+    @app.get("/api/logs/streams")
+    def log_streams(group: str = "all", bucket: str = "hour", endpoint: str = "", since: str = "",
+                    limit: int = 100, offset: int = 0, _: str = Depends(admin)):
+        if group not in LOG_GROUP_KEYS:
+            raise HTTPException(404, "unknown log group")
+        return store.log_streams(group, bucket, endpoint or None, since or None,
+                                 min(max(limit, 1), 500), max(offset, 0))
 
     @app.get("/api/event-types")
     def event_types(_: str = Depends(admin)):
