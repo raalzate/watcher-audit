@@ -21,6 +21,18 @@ POWERSHELL = "Microsoft-Windows-PowerShell/Operational"
 LSM = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
 
 
+def _decode_console(raw: bytes) -> str:
+    """Salida de wevtutil: UTF-8 si lo es; si no, la página de códigos de la consola (OEM, cp850 en
+    Windows en español). Leerla siempre como UTF-8 convertía "encontró" en U+FFFD."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return raw.decode("oem")          # codec que solo existe en Windows
+        except LookupError:
+            return raw.decode("utf-8", "replace")
+
+
 def parse_events(xml_text: str) -> list[dict]:
     """Parse the concatenated <Event> elements printed by `wevtutil qe /f:xml`."""
     root = ET.fromstring("<Events>" + xml_text + "</Events>")
@@ -123,8 +135,8 @@ class WinEventLogSource:
         res = subprocess.run(["wevtutil", "qe", channel, "/f:xml", *extra], capture_output=True, timeout=30,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if res.returncode != 0:
-            raise RuntimeError(res.stderr.decode("utf-8", "replace").strip() or f"wevtutil exit {res.returncode}")
-        return res.stdout.decode("utf-8", "replace")
+            raise RuntimeError(_decode_console(res.stderr).strip() or f"wevtutil exit {res.returncode}")
+        return _decode_console(res.stdout)
 
     def start(self) -> None:
         missing = []

@@ -90,7 +90,7 @@ def load_credentials(home: Path) -> dict | None:
     path = home / "credentials.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save_credentials(home: Path, creds: dict) -> None:

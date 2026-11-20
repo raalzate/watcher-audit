@@ -79,7 +79,7 @@ def cmd_status(home: Path, args) -> int:
     if not path.exists():
         print(json.dumps({"state": "STOPPED", "detail": "agent has never run", "home": str(home)}, indent=2))
         return 3
-    status = json.loads(path.read_text())
+    status = json.loads(path.read_text(encoding="utf-8"))
     if status["state"] != "STOPPED" and not _pid_alive(status.get("pid", -1)):
         status["state"] = "STOPPED"
         status["detail"] = "process not running and no clean shutdown recorded"
