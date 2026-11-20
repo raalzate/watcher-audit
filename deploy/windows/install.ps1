@@ -88,15 +88,31 @@ function Restringir([string]$Dir) {
 function Existe-Tarea([string]$Nombre) { [bool](Get-ScheduledTask -TaskName $Nombre -ErrorAction SilentlyContinue) }
 
 # Antes de reinstalar: nada de Watcher corriendo (Windows no deja reemplazar un .exe en uso).
+# Primero se le PIDE al agente que pare (queda AGENT_STOPPED en el repositorio); matar el proceso
+# es el ultimo recurso y deja la alerta "termino sin apagado limpio".
 function Detener-Todo {
+  $wa = Join-Path $Bin 'watcher-agent.exe'
+  if ((Test-Path $wa) -and (Test-Path (Join-Path $AgentHome 'data\spool.db'))) {
+    & $wa --home $AgentHome stop --wait 15 | Out-Host
+  }
   if (Get-Service $Servicio -ErrorAction SilentlyContinue) { Stop-Service $Servicio -Force -ErrorAction SilentlyContinue }
   foreach ($t in $TareaAgente, $TareaServidor) {
     if (Existe-Tarea $t) { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }
   }
-  Get-Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -and $_.Path.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase) } |
-    Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 1
+  # Por CIM y con arbol (/T): Get-Process no siempre ve la ruta de procesos SYSTEM, y
+  # Stop-ScheduledTask cierra el lanzador de uv pero deja vivo el python.exe hijo (el puerto sigue abierto).
+  # Continue local: en PS 5.1, "2>$null" con Stop convierte el stderr de taskkill en excepcion.
+  $ErrorActionPreference = 'Continue'
+  for ($i = 0; $i -lt 3; $i++) {
+    $vivos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.ProcessId -ne $PID -and (
+        ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)) -or
+        ($_.CommandLine -and $_.CommandLine -match 'watcher-(server|agent)|watcher\.agent'))
+    })
+    if (-not $vivos) { break }
+    foreach ($p in $vivos) { taskkill.exe /PID $p.ProcessId /T /F 2>$null | Out-Null }
+    Start-Sleep -Seconds 1
+  }
 }
 
 function Asegurar-Uv {

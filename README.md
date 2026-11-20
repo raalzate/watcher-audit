@@ -43,6 +43,8 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 -Modo agente
 
 # Retirar (conserva datos y evidencias en C:\ProgramData):
 powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall.ps1
+# Quitar TODO, también evidencias e identidad del equipo (pide escribir BORRAR):
+powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall.ps1 -BorrarDatos
 ```
 
 El agente se instala como servicio `WatcherAudit`. Si el servicio de pywin32 no se mantiene

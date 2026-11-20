@@ -62,6 +62,7 @@ class Agent:
         self.capturer = Capturer(self.cfg, self.spool, self.data_dir / "staging")
 
         self.stop_event = threading.Event()
+        self.finished = threading.Event()   # run() terminó y dejó registrado AGENT_STOPPED
         self.stop_reason = "unknown"
         self.enabled = False
         self.connected = False
@@ -244,6 +245,7 @@ class Agent:
     def run(self) -> None:
         spool = self.spool
         self.write_status("STARTING")
+        spool.kv_set("stop_request", "")   # un pedido de parada viejo no detiene este arranque
         unclean = spool.kv_get("running") == "1"
         spool.kv_set("running", "1")
         self.emit("AGENT_STARTED", force=True, data={
@@ -262,10 +264,19 @@ class Agent:
         # started after activation so the first heartbeat already reports the real state
         sender = threading.Thread(target=self._sender, name="sender", daemon=True)
         sender.start()
+        heartbeat = threading.Thread(target=self._heartbeat_loop, name="heartbeat", daemon=True)
+        heartbeat.start()
         tick = 0
         interval = self.cfg["agent"]["integrity_interval"]
         while not self.stop_event.wait(1):
             tick += 1
+            # `watcher-agent stop` (otro proceso) pide la parada por el spool: así un reinstalador o un
+            # administrador detiene al agente con AGENT_STOPPED, no matándolo (alerta de apagado sucio).
+            requested = spool.kv_get("stop_request")
+            if requested:
+                spool.kv_set("stop_request", "")
+                self.request_stop(requested)
+                continue
             want = spool.kv_get("enabled", "1") == "1"
             if want != self.enabled:
                 by = spool.kv_get("enabled_by") or "unknown"
@@ -302,28 +313,40 @@ class Agent:
         spool.kv_set("running", "0")
         self.write_status("STOPPED")
         self.log(f"agent stopped ({self.stop_reason})")
+        self.finished.set()
 
     # ------------------------------------------------------------------ delivery
+    def _heartbeat_loop(self) -> None:
+        """Latido en su propio hilo, a ritmo fijo. Antes iba en el bucle de entrega: una evidencia que
+        fallaba metía ese bucle en backoff de hasta 60 s, el repositorio (timeout 45 s) dejaba de oír
+        latidos y alertaba «sin comunicación» con el agente vivo. Quién está vivo no depende de si
+        una entrega puntual falla; `connected` lo decide solo el latido."""
+        interval = self.cfg["agent"]["heartbeat_interval"]
+        while not self.stop_event.is_set():
+            try:
+                self._heartbeat()
+                self.connected = True
+            except TransportError as e:
+                self.connected = False
+                self.last_send_error = str(e)
+            except Exception as e:
+                self.log(f"heartbeat error: {e!r}")
+            self.stop_event.wait(interval)
+
     def _sender(self) -> None:
         acfg = self.cfg["agent"]
-        next_heartbeat = 0.0
         failures = 0
         while not self.stop_event.is_set():
             try:
-                if time.monotonic() >= next_heartbeat:
-                    self._heartbeat()
-                    next_heartbeat = time.monotonic() + acfg["heartbeat_interval"]
                 if self.dropped and self.spool.count < acfg["spool_max_events"]:
                     with self._lock:
                         count, self.dropped = self.dropped, 0
                     self.emit("EVENTS_DROPPED", force=True, data={"count": count, "reason": "local spool full"})
                 self._flush_events()
                 self._flush_evidence()
-                self.connected = True
                 self.last_send_error = None
                 failures = 0
             except TransportError as e:
-                self.connected = False
                 self.last_send_error = str(e)
                 failures += 1
             except Exception as e:
