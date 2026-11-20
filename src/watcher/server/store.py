@@ -87,7 +87,7 @@ class Store:
 
     def _load_secrets(self) -> dict:
         path = self.dir / "server_secrets.json"
-        data = json.loads(path.read_text()) if path.exists() else {}
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         changed = False
         for key, env in (("admin_password", "WATCHER_ADMIN_PASSWORD"), ("enroll_token", "WATCHER_ENROLL_TOKEN"),
                          ("checkpoint_key", None)):

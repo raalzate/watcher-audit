@@ -79,17 +79,24 @@ class Agent:
 
     # ------------------------------------------------------------------ utils
     def log(self, message: str) -> None:
+        # Un mensaje de log nunca puede tumbar al agente. UTF-8 explícito: en Windows el default es
+        # cp1252 y un carácter fuera de él (p. ej. U+FFFD en un error de wevtutil) lanzaba
+        # UnicodeEncodeError dentro de activate() y mataba el proceso.
         line = f"{iso()} {message}\n"
         with self._log_lock:
             try:
                 path = self.home / "agent.log"
                 if path.exists() and path.stat().st_size > 5 * 1024 * 1024:
                     os.replace(path, self.home / "agent.log.1")
-                with open(path, "a") as f:
+                with open(path, "a", encoding="utf-8", errors="replace") as f:
                     f.write(line)
-            except OSError:
+            except Exception:
                 pass
-        sys.stderr.write(line)
+            try:
+                if sys.stderr is not None:
+                    sys.stderr.write(line)
+            except Exception:
+                pass
 
     def session_open(self, sid: str, provider: str) -> None:
         with self._lock:
@@ -167,7 +174,7 @@ class Agent:
         }
         tmp = self.home / "status.json.tmp"
         try:
-            tmp.write_text(json.dumps(status, indent=2))
+            tmp.write_text(json.dumps(status, indent=2), encoding="utf-8")
             os.replace(tmp, self.home / "status.json")
         except OSError:
             pass
