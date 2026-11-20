@@ -11,7 +11,9 @@ import servicemanager  # type: ignore
 import win32serviceutil  # type: ignore
 import win32service  # type: ignore
 
-from .core import Agent
+# Import absoluto a propósito: el host de servicios de pywin32 (pythonservice.exe) carga este archivo
+# como módulo suelto ("winservice"), sin paquete padre, y un import relativo falla al arrancar.
+from watcher.agent.core import Agent
 
 
 class WatcherAuditService(win32serviceutil.ServiceFramework):
