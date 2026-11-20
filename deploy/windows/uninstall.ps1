@@ -12,6 +12,13 @@ if (-not $esAdmin) {
 
 $AppDir = Join-Path $env:ProgramFiles 'Watcher'
 $Py = Join-Path $AppDir 'venv\Scripts\python.exe'
+$AgentHome = Join-Path $env:ProgramData 'Watcher'
+
+# Parada limpia primero: el repositorio registra AGENT_STOPPED en vez de una alerta de apagado sucio.
+$wa = Join-Path $AppDir 'venv\Scripts\watcher-agent.exe'
+if ((Test-Path $wa) -and (Test-Path (Join-Path $AgentHome 'data\spool.db'))) {
+  & $wa --home $AgentHome stop --wait 15 | Out-Host
+}
 
 if (Get-Service WatcherAudit -ErrorAction SilentlyContinue) {
   Stop-Service WatcherAudit -Force -ErrorAction SilentlyContinue

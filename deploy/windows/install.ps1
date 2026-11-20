@@ -88,7 +88,13 @@ function Restringir([string]$Dir) {
 function Existe-Tarea([string]$Nombre) { [bool](Get-ScheduledTask -TaskName $Nombre -ErrorAction SilentlyContinue) }
 
 # Antes de reinstalar: nada de Watcher corriendo (Windows no deja reemplazar un .exe en uso).
+# Primero se le PIDE al agente que pare (queda AGENT_STOPPED en el repositorio); matar el proceso
+# es el ultimo recurso y deja la alerta "termino sin apagado limpio".
 function Detener-Todo {
+  $wa = Join-Path $Bin 'watcher-agent.exe'
+  if ((Test-Path $wa) -and (Test-Path (Join-Path $AgentHome 'data\spool.db'))) {
+    & $wa --home $AgentHome stop --wait 15 | Out-Host
+  }
   if (Get-Service $Servicio -ErrorAction SilentlyContinue) { Stop-Service $Servicio -Force -ErrorAction SilentlyContinue }
   foreach ($t in $TareaAgente, $TareaServidor) {
     if (Existe-Tarea $t) { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }

@@ -1,4 +1,4 @@
-"""watcher-agent: enroll | run | enable | disable | status"""
+"""watcher-agent: enroll | run | stop | enable | disable | status"""
 from __future__ import annotations
 
 import argparse
@@ -52,8 +52,59 @@ def cmd_run(home: Path, _args) -> int:
         sig = getattr(signal, name, None)
         if sig is not None:
             signal.signal(sig, lambda *_a, n=name: agent.request_stop(f"signal:{n}"))
+    if sys.platform == "win32":
+        _windows_console_handler(agent)
     agent.run()
     return 0
+
+
+def _windows_console_handler(agent) -> None:
+    """Fuera del servicio (tarea programada o consola), Windows avisa con CTRL_CLOSE_EVENT /
+    CTRL_SHUTDOWN_EVENT antes de matar el proceso. Sin este handler cada apagado del equipo quedaba
+    como AGENT_UNCLEAN_SHUTDOWN (alerta high). Con él se registra AGENT_STOPPED con el motivo.
+    CTRL_LOGOFF_EVENT se ignora a propósito: que un usuario cierre sesión no detiene la auditoría."""
+    import ctypes
+    from ctypes import wintypes
+
+    reasons = {0: "ctrl_c", 1: "ctrl_break", 2: "console_close", 6: "system_shutdown"}
+    logoff = 5
+    routine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+    def handler(ctrl_type: int) -> bool:
+        if ctrl_type == logoff:
+            return True                      # True = manejado: el proceso sigue vivo
+        agent.request_stop(reasons.get(ctrl_type, f"console_event_{ctrl_type}"))
+        agent.finished.wait(4)               # Windows da ~5 s antes de terminar el proceso
+        return True
+
+    agent._console_handler = routine(handler)  # la referencia debe vivir tanto como el proceso
+    if not ctypes.windll.kernel32.SetConsoleCtrlHandler(agent._console_handler, True):
+        agent.log("could not install the Windows console control handler")
+
+
+def cmd_stop(home: Path, args) -> int:
+    """Parada limpia pedida desde otro proceso: queda AGENT_STOPPED (con quién la pidió) en el
+    repositorio, en vez de la alerta de apagado sucio que deja matar el proceso."""
+    import time
+    if not (home / "data" / "spool.db").exists():
+        print("agent has never run here; nothing to stop")
+        return 0
+    spool = Spool(home / "data" / "spool.db")
+    spool.kv_set("stop_request", f"local_cli:{getpass.getuser()}")
+    spool.close()
+    deadline = time.monotonic() + args.wait
+    path = home / "status.json"
+    while time.monotonic() < deadline:
+        try:
+            status = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            status = {}
+        if status.get("state") == "STOPPED" or not _pid_alive(status.get("pid", -1)):
+            print("agent stopped (recorded centrally as AGENT_STOPPED)")
+            return 0
+        time.sleep(0.5)
+    print(f"agent did not stop within {args.wait:g}s", file=sys.stderr)
+    return 1
 
 
 def cmd_toggle(home: Path, enable: bool) -> int:
@@ -103,6 +154,8 @@ def main(argv=None) -> int:
     enroll.add_argument("--ca-file", help="CA bundle for the repository certificate")
     enroll.add_argument("--force", action="store_true")
     sub.add_parser("run", help="run in the foreground (what the service/daemon executes)")
+    stop = sub.add_parser("stop", help="ask the running agent to stop cleanly (recorded centrally)")
+    stop.add_argument("--wait", type=float, default=15, help="seconds to wait for it to stop")
     sub.add_parser("enable", help="turn auditing on")
     sub.add_parser("disable", help="turn auditing off (recorded centrally)")
     status = sub.add_parser("status", help="show the verifiable agent state")
@@ -113,6 +166,8 @@ def main(argv=None) -> int:
         return cmd_enroll(home, args)
     if args.cmd == "run":
         return cmd_run(home, args)
+    if args.cmd == "stop":
+        return cmd_stop(home, args)
     if args.cmd in ("enable", "disable"):
         return cmd_toggle(home, args.cmd == "enable")
     return cmd_status(home, args)
