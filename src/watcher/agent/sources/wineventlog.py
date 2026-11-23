@@ -197,6 +197,8 @@ class WinEventLogSource:
             if m["path"] and m["actor"]["pid"] != os.getpid():
                 agent.attribution[os.path.normcase(m["path"])] = (time.monotonic(), m["actor"])
         elif m["kind"] == "network":
+            if not self.cfg.get("network_events", False):
+                return
             agent.emit("NETWORK_CONNECTION", actor=m["actor"], data={**m["data"], "source": "sysmon"},
                        timestamp=m["ts"])
         elif m["kind"] == "scriptblock":

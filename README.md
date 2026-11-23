@@ -101,6 +101,11 @@ o desde el dashboard, en *Endpoints y agentes*.
 esperan en la cola local) · `STOPPED` · `TAMPER_DETECTED`. El repositorio marca `DISCONNECTED` por su cuenta
 cuando deja de recibir latidos.
 
+En Windows, las conexiones de red individuales de Sysmon se omiten por defecto para reducir el volumen
+de eventos. Para habilitarlas, agrega `network_events = true` bajo `[windows_eventlog]` en
+`C:\ProgramData\Watcher\config.toml` y reinicia el agente. Los eventos de procesos, PowerShell,
+archivos y sesiones siguen habilitados según las fuentes disponibles.
+
 ## Integridad
 
 Cada evento lleva `seq`, `previous_hash` y `event_hash` (SHA-256 del evento completo). El repositorio rechaza

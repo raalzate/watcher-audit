@@ -50,6 +50,8 @@ DEFAULTS: dict = {
     },
     "windows_eventlog": {
         "enabled": True,
+        # Sysmon network-connect events can be very high volume; opt in when needed.
+        "network_events": False,
         "poll_interval": 1,
         "channels": [
             "Microsoft-Windows-Sysmon/Operational",
