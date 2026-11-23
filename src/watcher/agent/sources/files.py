@@ -18,8 +18,11 @@ class _Handler(FileSystemEventHandler):
         self.src = src
 
     def on_created(self, e):
-        if not e.is_directory:
-            self.src.touch(os.fsdecode(e.src_path), created=True)
+        path = os.fsdecode(e.src_path)
+        if e.is_directory:
+            self.src.created_dir(path)
+        else:
+            self.src.touch(path, created=True)
 
     def on_modified(self, e):
         if not e.is_directory:
@@ -92,6 +95,15 @@ class FileSource:
             prev = self.pending.get(path)
             self.pending[path] = (time.monotonic() + self.cfg["settle_seconds"],
                                   created or bool(prev and prev[1]), quiet and (prev is None or prev[2]))
+
+    def created_dir(self, path: str) -> None:
+        if self.excluded(path):
+            return
+        self.agent.emit(
+            "DIRECTORY_CREATED",
+            actor=self.agent.attribute(path),
+            resource={"path": path, "name": os.path.basename(path), "is_directory": True},
+        )
 
     def deleted(self, path: str, is_dir: bool) -> None:
         if self.excluded(path):
