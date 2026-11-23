@@ -53,6 +53,10 @@ def emit_process(agent, *, name, exe, pid, ppid, parent, user, args: list[str] |
                  cmdline: str | None = None, cwd=None, started=None, exe_sha256=None, source="poll",
                  extra: dict | None = None):
     pcfg = agent.cfg["processes"]
+    proc_name = os.path.basename((exe or name or "").replace("\\", "/")).lower()
+    excluded = {n.lower() for n in pcfg["exclude_names"]}
+    if proc_name in excluded or proc_name.removesuffix(".exe") in excluded:
+        return None
     redactions = 0
     if args is not None:
         args, redactions = redact_args(args)
