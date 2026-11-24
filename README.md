@@ -52,6 +52,9 @@ arriba, el script lo avisa y usa una tarea programada `WatcherAuditAgent` (SYSTE
 Windows): es el mismo agente, solo cambia quién lo lanza. Para usar un certificado propio en vez
 de la CA generada: `-TlsCert cert.pem -TlsKey key.pem`.
 
+Comandos de operación en Windows para pausar, detener, limpiar datos, volver a enrolar o desinstalar:
+[docs/OPERACION_WINDOWS.md](docs/OPERACION_WINDOWS.md).
+
 ## Probarlo en una máquina de desarrollo (5 minutos, cualquier SO)
 
 ```bash
